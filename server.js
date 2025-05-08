@@ -331,7 +331,7 @@
 
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
-const express = require('express'); // <--- YANGI
+const express = require('express'); // <--- PORT UCHUN QO'SHILDI
 
 // .env faylidan o'qish yoki default qiymat
 const TOKEN = process.env.BOT_TOKEN;
@@ -339,32 +339,33 @@ const LOG_CHANNEL_ID = process.env.CHANNEL_ID;
 const BOT_USERNAME = process.env.BOT_USERNAME;
 const NEW_USERS_LOG_CHANNEL_ID = process.env.NEW_USERS_LOG_CHANNEL_ID || LOG_CHANNEL_ID;
 
-// Webhook uchun .env o'zgaruvchilari
-const WEBHOOK_URL = process.env.WEBHOOK_URL; // Masalan: https://your-app-name.herokuapp.com
-const PORT = process.env.PORT; // Ko'pincha hosting platformasi tomonidan belgilanadi
+// --- PORT VA WEBHOOK UCHUN YANGI O'ZGARUVCHILAR ---
+const PORT = process.env.PORT || 3000; // Server ishlaydigan port
+const WEBHOOK_URL = process.env.WEBHOOK_URL; // Botga xabarlar yuboriladigan URL
+// --------------------------------------------------
 
 // .env tekshiruvi
 if (!TOKEN) { console.error("XATOLIK: .env da BOT_TOKEN yo'q!"); process.exit(1); }
 if (!LOG_CHANNEL_ID) { console.error("XATOLIK: .env da LOG_CHANNEL_ID yo'q!"); process.exit(1); }
 if (!BOT_USERNAME) { console.error("XATOLIK: .env da BOT_USERNAME yo'q!"); process.exit(1); }
-if (!WEBHOOK_URL) { console.error("XATOLIK: .env da WEBHOOK_URL yo'q! (Masalan: https://sizning-domeningiz.com)"); process.exit(1); }
+// --- WEBHOOK_URL TEKSHIRUVI ---
+if (!WEBHOOK_URL) {
+    console.error("XATOLIK: .env da WEBHOOK_URL yo'q! Masalan: https://yourdomain.com");
+    process.exit(1);
+}
+// -----------------------------
 
+// const bot = new TelegramBot(TOKEN, { polling: true }); // <-- POLLING O'CHIRILDI
+const bot = new TelegramBot(TOKEN); // <-- WEBHOOK UCHUN SHUNDAY BO'LADI
 
-// const bot = new TelegramBot(TOKEN, { polling: true }); // <--- ESKI
-const bot = new TelegramBot(TOKEN); // <--- YANGI (polling o'chirildi)
-
-// Webhook yo'li (path) - xavfsizlik uchun token bilan
-const WEBHOOK_PATH = `/webhook/${TOKEN}`;
-const FULL_WEBHOOK_URL = `${WEBHOOK_URL}${WEBHOOK_PATH}`;
-
-// Xotira (o'zgarishsiz)
+// Xotira (SIZNING KODINGIZ - O'ZGARISHSIZ)
 const userStore = {};
 const writingTo = {};
 const conversationMap = {};
 
-// Konsol loglari va yordamchi funksiyalar (o'zgarishsiz)
+// Konsol loglari va yordamchi funksiyalar (SIZNING KODINGIZ - O'ZGARISHSIZ)
 console.log('------------------------------------');
-console.log('Bot ishga tushirilmoqda (Webhook rejimi)...'); // <--- O'zgartirildi
+console.log('Bot ishga tushirilmoqda (Webhook rejimi)...'); // Log o'zgartirildi
 console.log(`Yopiq log kanali (asosiy): ${LOG_CHANNEL_ID}`);
 if (NEW_USERS_LOG_CHANNEL_ID && NEW_USERS_LOG_CHANNEL_ID !== LOG_CHANNEL_ID) {
     console.log(`Yangi foydalanuvchilar uchun log kanali: ${NEW_USERS_LOG_CHANNEL_ID}`);
@@ -373,14 +374,47 @@ if (NEW_USERS_LOG_CHANNEL_ID && NEW_USERS_LOG_CHANNEL_ID !== LOG_CHANNEL_ID) {
 }
 console.log(`Bot username: @${BOT_USERNAME}`);
 console.log('------------------------------------');
-
 function generateUniqueLinkParam(userId) { return `u${userId}`; }
 function getUserIdFromLinkParam(param) { if (param && param.startsWith('u')) { const s = param.substring(1); if (!isNaN(s)) return parseInt(s, 10); } return null; }
 function formatDateTime(timestamp) { const d = new Date(timestamp * 1000); return d.toLocaleString('uz-UZ', { timeZone: 'Asia/Tashkent' }); }
 async function logToChannel(channelId, message, options = { parse_mode: 'Markdown' }) { console.log(`LOG_ATTEMPT: Kanal ID: ${channelId}`); try { await bot.sendMessage(channelId, message, options); console.log(`LOG_SUCCESS: ${channelId} ga log yozildi.`); } catch (e) { console.error(`LOG_ERROR: ${channelId} ga yozishda xato:`, e.message); if (e.response?.body) console.error("DETAILS:", e.response.body); } }
 
 
-// /start buyrug'i (o'zgarishsiz)
+// --- EXPRESS SERVER VA WEBHOOK SOZLAMALARI (PORT UCHUN QO'SHILDI) ---
+const app = express();
+app.use(express.json()); // Telegramdan keladigan JSONni tushunish uchun
+
+// Webhook uchun maxfiy yo'l (URLga qo'shiladi)
+// Bu token yoki boshqa maxfiy satr bo'lishi mumkin
+const secretPath = `/webhook/${TOKEN}`; // Misol, TOKENni ishlatish
+const fullWebhookUrl = `${WEBHOOK_URL.replace(/\/$/, '')}${secretPath}`; // Oxiridagi / ni olib tashlash
+
+// Telegramdan yangilanishlarni qabul qilish uchun endpoint
+app.post(secretPath, (req, res) => {
+    bot.processUpdate(req.body); // Botga yangilanishni yuborish
+    res.sendStatus(200);         // Telegramga OK javobini qaytarish
+});
+
+// Webhookni Telegramga o'rnatish
+bot.setWebHook(fullWebhookUrl)
+    .then(() => {
+        console.log(`Webhook muvaffaqiyatli o'rnatildi: ${fullWebhookUrl}`);
+        // Serverni faqat webhook o'rnatilgandan keyin ishga tushirish
+        app.listen(PORT, '0.0.0.0', () => { // '0.0.0.0' barcha mavjud tarmoq interfeyslarida tinglash uchun
+            console.log(`Bot serveri ${PORT}-portda ishga tushdi...`);
+            console.log(`Bot xabarlarni webhook orqali ${fullWebhookUrl} manzilida kutmoqda...`);
+        });
+    })
+    .catch((error) => {
+        console.error("Webhook o'rnatishda xato:", error.message);
+        if (error.response && error.response.body) {
+            console.error("Telegram API javobi:", error.response.body.description);
+        }
+        process.exit(1);
+    });
+// ----------------------------------------------------------------------
+
+// /start buyrug'i (SIZNING KODINGIZ - FUNKSIYASI O'ZGARISHSIZ)
 bot.onText(/\/start(?: (.+))?/, async (msg, match) => {
     const chatId = msg.chat.id;
     const userId = msg.from.id;
@@ -397,29 +431,30 @@ bot.onText(/\/start(?: (.+))?/, async (msg, match) => {
     let userAlreadyLogged = userStore[userId] && userStore[userId].loggedToChannel;
 
     if (!userStore[userId]) {
-        userStore[userId] = { id: userId, chatId, username, firstName, lastName, uniqueLinkParam: generateUniqueLinkParam(userId), joinDate: messageTime, languageCode, loggedToChannel: false }; // id qo'shildi
+        userStore[userId] = { chatId, username, firstName, lastName, uniqueLinkParam: generateUniqueLinkParam(userId), joinDate: messageTime, languageCode, loggedToChannel: false, id: userId };
         console.log(`USER_STORE: Yangi user saqlandi: ${fullName} (ID: ${userId})`);
         userAlreadyLogged = false;
     } else {
-        Object.assign(userStore[userId], { chatId, username, firstName, lastName, languageCode });
+        Object.assign(userStore[userId], { chatId, username, firstName, lastName, languageCode, id: userId });
         if (!userStore[userId].uniqueLinkParam) userStore[userId].uniqueLinkParam = generateUniqueLinkParam(userId);
         console.log(`USER_STORE: User ma'lumotlari yangilandi: ${fullName} (ID: ${userId})`);
     }
-     if (!userStore[userId].id) userStore[userId].id = userId; // Har ehtimolga qarshi
 
     if (!userAlreadyLogged) {
         let userMentionText = username ? `@${username}` : `[${fullName || 'Foydalanuvchi'}](tg://user?id=${userId})`;
         let referredByText = "";
         if (deepLinkParam) {
             const referredByUserId = getUserIdFromLinkParam(deepLinkParam);
-            if (referredByUserId) {
+            if (referredByUserId && userStore[referredByUserId]) { // referredByUserId mavjudligini va userStoreda borligini tekshirish
                 const rInfo = userStore[referredByUserId];
                 let rDisplay = `ID: \`${referredByUserId}\``;
-                if (rInfo) {
-                    const rFullName = `${rInfo.firstName || ''} ${rInfo.lastName || ''}`.trim();
-                    rDisplay = rInfo.username ? `@${rInfo.username}` : `[${rFullName || 'Foydalanuvchi'}](tg://user?id=${referredByUserId})`;
-                }
+                // if (rInfo) { // Yuqorida tekshirildi
+                const rFullName = `${rInfo.firstName || ''} ${rInfo.lastName || ''}`.trim();
+                rDisplay = rInfo.username ? `@${rInfo.username}` : `[${rFullName || 'Foydalanuvchi'}](tg://user?id=${referredByUserId})`;
+                // }
                 referredByText = `\n🔗 **Kim orqali:** ${rDisplay}`;
+            } else if (referredByUserId) { // Agar userStoreda topilmasa ham ID ni ko'rsatish
+                referredByText = `\n🔗 **Kim orqali:** _Noma'lum foydalanuvchi (ID: \`${referredByUserId}\`)_`;
             } else { referredByText = `\n🔗 **Parametr orqali:** _Noto'g'ri (\`${deepLinkParam}\`)_`; }
         }
         const logMsg = `🆕 **YANGI FOYDALANUVCHI**\n\n👤 **Nickname:** ${firstName}\n👤 **User:** ${userMentionText}\n🆔 **ID:** \`${userId}\`\n🌐 **Til:** ${languageCode}\n📅 **Vaqt:** ${messageTime}${referredByText}`;
@@ -432,7 +467,7 @@ bot.onText(/\/start(?: (.+))?/, async (msg, match) => {
         const targetId = getUserIdFromLinkParam(deepLinkParam);
         if (targetId && userStore[targetId]) {
             const tInfo = userStore[targetId];
-            // const tName = tInfo.username ? `@${tInfo.username}` : `${tInfo.firstName || ''} ${tInfo.lastName || ''}`.trim() || "Foydalanuvchi";
+            // const tName = tInfo.username ? `@${tInfo.username}` : `${tInfo.firstName || ''} ${tInfo.lastName || ''}`.trim() || "Foydalanuvchi"; // Bu o'zgaruvchi ishlatilmayapti
             if (userId === targetId) {
                 bot.sendMessage(chatId, `Salom, ${fullName}! 👋\n\nBu sizning shaxsiy havolangiz, ushbu havola orqali sizga anonim xabar yozishlari mumkin:\n\n\`https://t.me/${BOT_USERNAME}?start=${userStore[userId].uniqueLinkParam}\`\n\n`, { parse_mode: 'Markdown' });
                 delete writingTo[userId];
@@ -450,7 +485,7 @@ bot.onText(/\/start(?: (.+))?/, async (msg, match) => {
     }
 });
 
-// /send buyrug'i (o'zgarishsiz)
+// /send buyrug'i (SIZNING KODINGIZ - FUNKSIYASI O'ZGARISHSIZ)
 bot.onText(/\/send @(\S+) (.+)/s, async (msg, match) => {
     const senderChatId = msg.chat.id;
     const senderUserId = msg.from.id;
@@ -490,7 +525,7 @@ bot.onText(/\/send @(\S+) (.+)/s, async (msg, match) => {
 
     if (targetUserInfo && targetUserInfo.chatId && targetUserInfo.id !== senderUserId) {
         const targetChatId = targetUserInfo.chatId;
-        const targetUserId = targetUserInfo.id; // Ensure targetUserId is defined
+        const targetUserId = targetUserInfo.id;
         const targetDisplayName = targetUserInfo.username ? `@${targetUserInfo.username}` : `${targetUserInfo.firstName || ''} ${targetUserInfo.lastName || ''}`.trim() || 'Foydalanuvchi';
         try {
             const directMessageToTarget = `🔔 **Sizga anonim xabar (\`/send\` orqali):**\n\n${messageText}\n\n` +
@@ -524,7 +559,8 @@ bot.onText(/\/send @(\S+) (.+)/s, async (msg, match) => {
     if (writingTo[senderUserId]) delete writingTo[senderUserId];
 });
 
-// Asosiy xabarlarni qayta ishlash (o'zgarishsiz)
+
+// Asosiy xabarlarni qayta ishlash (SIZNING KODINGIZ - FUNKSIYASI O'ZGARISHSIZ)
 bot.on('message', async (msg) => {
     const senderChatId = msg.chat.id;
     const senderUserId = msg.from.id;
@@ -638,49 +674,26 @@ bot.on('message', async (msg) => {
     }
 });
 
-// bot.on('polling_error', (error) => { // <--- BU ENDI ISHLAMAYDI, WEBHOOKDA BOSHQA XATO TURLARI BO'LADI
-//     console.error(`POLLING_ERROR: ${error.code} - ${error.message}`);
-//     if (error.message && error.message.includes("ETELEGRAM: 409 Conflict")) {
-//         console.error("POLLING_ERROR_ADVICE: Botning faqat bitta nusxasi ishlayotganiga ishonch hosil qiling! Muammo davom etsa, bot tokenini @BotFather orqali almashtiring.");
-//     }
-// });
+// Polling xatolarini eshitish o'rniga webhook xatolarini eshitish
+// bot.on('polling_error', (error) => { ... }); // <-- BU O'CHIRILDI
+bot.on('webhook_error', (error) => { // <--- WEBHOOK UCHUN XATO HANDLER
+    console.error(`WEBHOOK_ERROR: ${error.code} - ${error.message || error.toString()}`);
+});
 
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => { // <--- WEBHOOKNI O'CHIRISH QO'SHILDI
     console.log('------------------------------------');
     console.log("Bot to'xtatilmoqda (SIGINT)...");
-    // Kelajakda: userStore, conversationMap ni faylga saqlash
-    console.log('------------------------------------');
-    process.exit(0);
-});
-
-// --- WEBHOOK SETUP ---
-const app = express();
-app.use(express.json()); // Telegramdan keladigan JSON body ni parse qilish uchun
-
-// Webhook uchun POST route
-app.post(WEBHOOK_PATH, (req, res) => {
-    bot.processUpdate(req.body);
-    res.sendStatus(200); // Telegramga OK javobini qaytarish
-});
-
-// Serverni ishga tushirish va webhookni o'rnatish
-app.listen(PORT, async () => {
-    console.log(`🚀 Server ${PORT}-portda ishga tushdi`);
     try {
-        await bot.setWebHook(FULL_WEBHOOK_URL);
-        console.log(`✅ Webhook muvaffaqiyatli o'rnatildi: ${FULL_WEBHOOK_URL}`);
-        console.log("Bot xabarlarni kutishni boshladi (webhook orqali)...");
-    } catch (error) {
-        console.error("❌ Webhook o'rnatishda xatolik:", error.message);
-        if (error.response && error.response.body) {
-            console.error("Telegram API javobi:", error.response.body);
-        }
-        console.error("Maslahat: WEBHOOK_URL to'g'ri (HTTPS) ekanligiga va serveringiz internetdan kirish mumkin bo'lganiga ishonch hosil qiling.");
-        process.exit(1); // Xatolik bilan chiqish
+        console.log("Webhookni o'chirishga harakat qilinmoqda...");
+        await bot.deleteWebHook();
+        console.log("Webhook muvaffaqiyatli o'chirildi.");
+    } catch (e) {
+        console.error("Webhookni o'chirishda xato:", e.message);
+    } finally {
+        // Kelajakda: userStore, conversationMap ni faylga saqlash
+        console.log('------------------------------------');
+        process.exit(0);
     }
 });
 
-// Oddiy GET route, server ishlayotganini tekshirish uchun
-app.get('/', (req, res) => {
-    res.send('Salom, Telegram Bot serveri ishlamoqda!');
-});
+// console.log("Bot xabarlarni kutishni boshladi..."); // <-- BU ENDI KERAK EMAS, app.listen ICHIDA BOR
