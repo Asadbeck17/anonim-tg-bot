@@ -341,7 +341,7 @@ const NEW_USERS_LOG_CHANNEL_ID = process.env.NEW_USERS_LOG_CHANNEL_ID || LOG_CHA
 
 // Webhook uchun .env o'zgaruvchilari
 const WEBHOOK_URL = process.env.WEBHOOK_URL; // Masalan: https://your-app-name.herokuapp.com
-const PORT = process.env.PORT || 3000; // Ko'pincha hosting platformasi tomonidan belgilanadi
+const PORT = process.env.PORT; // Ko'pincha hosting platformasi tomonidan belgilanadi
 
 // .env tekshiruvi
 if (!TOKEN) { console.error("XATOLIK: .env da BOT_TOKEN yo'q!"); process.exit(1); }
